@@ -13,7 +13,7 @@ def set_seed(seed):
 
 def get_mathqa_c4(nsamples, seed, seqlen, model):
     from datasets import load_dataset
-    traindata_mathqa = load_dataset('math_qa', split='train')
+    traindata_mathqa = load_dataset('math_qa', split='train', trust_remote_code=True)
     from transformers import AutoTokenizer 
     tokenizer = AutoTokenizer.from_pretrained(model, use_fast=False, seqlen=2048)
 

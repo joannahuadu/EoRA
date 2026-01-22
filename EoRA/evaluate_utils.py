@@ -3,9 +3,16 @@ import torch.nn as nn
 from tqdm import tqdm
 import os
 
-from lm_eval.base import BaseLM
+try:
+    from lm_eval.api.model import LM as BaseLM
+    print("Using lm_eval.api.model.LM as BaseLM")
+except ImportError:
+    from lm_eval.base import BaseLM
+    print("Using lm_eval.base.BaseLM as BaseLM")
 from lm_eval import evaluator
+from lm_eval.tasks import initialize_tasks
 from lm_eval import utils
+from lm_eval.models.huggingface import HFLM
 from datasets import load_dataset
 import time
 import re
@@ -458,39 +465,55 @@ def evaluate_model(
     num_fewshot: Number of examples in few-shot context
     eval_ppl: str datasets are split by , such as 'wikitext2,ptb,c4'
     """
-    if is_llama3:
-        if "gsm8k" in tasks:
-            print("gsm8k model config!")
-            lm = GSM8K_EvalLM_llama3(model, tokenizer, batch_size=batch_size)
-        else:
-            lm = EvalLM_llama3(model, tokenizer, batch_size=batch_size)
+    use_hflm = BaseLM.__module__.startswith("lm_eval.api.model")
+    if use_hflm:
+        lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=batch_size)
     else:
-        if "gsm8k" in tasks:
-            print("gsm8k model config!")
-            lm = GSM8K_EvalLM(model, tokenizer, batch_size=batch_size)
+        if is_llama3:
+            if "gsm8k" in tasks:
+                print("gsm8k model config!")
+                lm = GSM8K_EvalLM_llama3(model, tokenizer, batch_size=batch_size)
+            else:
+                lm = EvalLM_llama3(model, tokenizer, batch_size=batch_size)
         else:
-            lm = EvalLM(model, tokenizer, batch_size=batch_size)
-    results = {}
+            if "gsm8k" in tasks:
+                print("gsm8k model config!")
+                lm = GSM8K_EvalLM(model, tokenizer, batch_size=batch_size)
+            else:
+                lm = EvalLM(model, tokenizer, batch_size=batch_size)
 
 
     print(f"tasks {tasks}")
     if tasks != "":
-        t_results = evaluator.simple_evaluate(
+        initialize_tasks()
+        results = evaluator.simple_evaluate(
             lm,
             tasks=tasks.split(","),
             batch_size=batch_size,
             num_fewshot=num_fewshot,
             limit=None if limit == -1 else limit,
-            no_cache=True,
         )
-        t_results = t_results["results"]
-        acc_list = [
-            t_results[key]["acc"] for key in t_results.keys() if "acc" in t_results[key]
-        ]
-        t_results["mean"] = sum(acc_list) / len(acc_list)
-        results.update(t_results)
-        print(results)
-        # print mean
-        print(f"\n\n===== mean acc: {sum(acc_list)/len(acc_list)} =====\n\n")
+    results_by_task = results.get("results", {})
+    print("\n" + "=" * 60)
+    print("Evaluation Results")
+    print("=" * 60)
+    for task, metrics in results_by_task.items():
+        print(f"\n{task}:")
+        for k, v in metrics.items():
+            if "stderr" not in k:
+                print(f"  {k}: {v}")
+
+    print("\n" + "=" * 60)
+    print("Summary")
+    print("=" * 60)
+    summary_metrics = {}
+    for task, metrics in results_by_task.items():
+        for k, v in metrics.items():
+            if "stderr" in k:
+                continue
+            if k.endswith("/acc") or "acc" in k.lower():
+                key = f"{task} {k}"
+                summary_metrics[key] = v
+                print(f"{key}: {v}")
 
     return results
